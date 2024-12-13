@@ -1,0 +1,94 @@
+Logging :
+
+Setting up IAM Policy :
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:PutLogEvents",
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+
+Attach this IAM policy to the EC2 instance role running your Kubernetes worker nodes.
+
+
+
+Fluentd Configuration for AWS CloudWatch:
+
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd-cloudwatch
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: fluentd-cloudwatch
+  template:
+    metadata:
+      labels:
+        name: fluentd-cloudwatch
+    spec:
+      containers:
+        - name: fluentd
+          image: fluent/fluentd-kubernetes-daemonset:latest
+          env:
+            - name: FLUENT_ELASTICSEARCH_HOST
+              value: "sample_value"  
+            - name: FLUENTD_ARGS
+              value: "--no-supervisor"
+            - name: AWS_REGION
+              value: "us-east-1"  
+          volumeMounts:
+            - name: fluentd-config
+              mountPath: /fluentd/etc/fluent.conf
+              subPath: fluent.conf
+            - name: fluentd-logs
+              mountPath: /var/log
+
+      volumes:
+        - name: fluentd-config
+          configMap:
+            name: fluentd-cloudwatch-config
+        - name: fluentd-logs
+          hostPath:
+            path: /var/log
+            type: Directory
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-cloudwatch-config
+  namespace: kube-system
+data:
+  fluent.conf: |
+    @include /fluentd/etc/kubernetes.conf
+
+    <source>
+      @type tail
+      path /var/log/containers/*.log
+      pos_file /var/log/fluentd-containers.pos
+      tag kube.*
+      format json
+    </source>
+
+    <match kube.**>
+      @type cloudwatch_logs
+      log_group_name kubernetes-logs
+      log_stream_name fluentd
+      region ${AWS_REGION}
+      auto_create_stream true
+      include_time_key true
+      time_key time
+      time_format %Y-%m-%dT%H:%M:%S
+    </match>
